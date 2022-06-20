@@ -1,0 +1,137 @@
+/**************************************************************************
+*
+* McStas, neutron ray-tracing package
+*         Copyright 1997-2006, All rights reserved
+*         Risoe National Laboratory, Roskilde, Denmark
+*         Institut Laue Langevin, Grenoble, France
+*
+* Component: pol_CC_expansion_v4
+* 
+* %I
+* Written by: Sam McKay
+* Date: October 2021
+* Origin: Indiana University
+*
+* Model of the NRSE correction coil (CC) that uses a supplied field integral
+* expansion with fitting parameters.
+*
+* %D
+* Rectangular box that approximates the action of the CC. The 
+* correction coil is assumed to be a rectangular box. A neutron hitting outside of 
+* the opening square or the walls is absorbed.
+*
+* This component does NOT take gravity into account.
+*
+* Example: pol_CC_expansion_v4(xwidth=0.02, yheight=0.02, zdepth=0.16, current=10.0, balanced=0)
+*
+* %P
+* INPUT PARAMETERS:
+* xwidth:		[m]   Width of opening 
+* yheight:		[m]   Height of opening
+* zdepth:		[m]   Length of field region
+* current:		[A]	  Current in the coil
+* balanced: 	[N/A] If true, cancels out the constant field integral term
+*
+* OUTPUT PARAMETERS:
+* phase_fin: [N/A]   Phase angle of spin in the x-z plane (local coordintates)
+*
+* %E
+*******************************************************************************/
+
+DEFINE COMPONENT pol_CC_expansion_v4
+SETTING PARAMETERS (xwidth=0.02, yheight=0.02, zdepth=0.16, current=10.0, balanced=0)
+OUTPUT PARAMETERS (phase_fin)
+// Neutron parameters: x, y, z, vx, vy, vz, t, sx, sy, sz, p
+
+SHARE
+%{
+%}
+
+DECLARE
+%{
+  double phase_fin; //final phase
+  
+  //Constants used to calculate	Larmor phase
+  double gamma;
+  double velocity;
+  double FI;
+  
+  double FI_0;  //field integral expansion constants
+  double a;
+  double b;
+  double c;
+  double d;
+  
+  double phi;
+  double psi;
+%}
+
+INITIALIZE
+%{
+  phase_fin = 0.0; //used for debugging
+  
+  gamma = -1.832471*pow(10,8); //neutron gyromagnetic ratio
+  
+  FI_0 = 0.0001685716*(1 - balanced);  //converted from G*cm/10Amp to T*m/Amp
+  a = 0.0087755046;
+  b = 0.0089702849; 
+  c = -0.0005253771;
+  d = 0.0009858967;
+  
+  if ((xwidth<=0) || (yheight<=0) || (zdepth<=0)) {
+     fprintf(stderr, "Pol_filter: %s: Null or negative volume! \n"
+	 "ERROR (xwidth, yheight, zdepth); exiting. \n",
+	 NAME_CURRENT_COMP);
+     exit(1);
+  }
+  
+  if(balanced !=0 && balanced!=1) {
+     fprintf(stderr, "balanced must be either 0 or 1! \n"
+	 "ERROR; exiting. \n",
+	 NAME_CURRENT_COMP);
+     exit(1);
+  }
+  
+%}
+
+TRACE
+%{
+  double sx_in = sx, sz_in = sz; //initial spin components
+  double phase_in = atan2(sx_in, sz_in);  //initial Larmor phase
+  double deltaT = zdepth/vz; //time spent inside prism
+  
+  PROP_Z0;  //propagate neutron to local coordinate system origin (front face)
+  
+  if (!inside_rectangle(x, y, xwidth, yheight)){  //defines front mask
+     SCATTER;  //indicates interaction with device
+     ABSORB;
+  }
+  
+  if (!inside_rectangle(x+vx*deltaT, y+vy*deltaT, xwidth, yheight)) {  //defines walls and back mask
+     SCATTER;  //indicates interaction with device
+	 ABSORB;
+  }  
+  
+  PROP_DT(deltaT/2);  //propagate to center of device
+  SCATTER;  //indicates interaction with device
+  
+  velocity = sqrt(vx*vx+vy*vy+vz*vz);
+  phi = atan2(vx,vz); //horizontal plane divergence angle
+  psi = atan2(vy,vz); //vertical plane divergence angle
+  
+  FI = FI_0 + a*x*x + b*y*y + c*x*phi + d*y*psi;
+  
+  phase_fin = gamma/velocity*current*FI + phase_in;
+  sz = cos(phase_fin);
+  sx = sin(phase_fin);
+  
+  PROP_DT(deltaT/2);  //exits device
+
+%}
+
+MCDISPLAY
+%{
+  box(0, 0, zdepth/2.0, xwidth, yheight, zdepth);
+%}
+
+END

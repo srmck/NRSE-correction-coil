@@ -1,0 +1,100 @@
+/**************************************************************************
+*
+* McStas, neutron ray-tracing package
+*         Copyright 1997-2006, All rights reserved
+*         Risoe National Laboratory, Roskilde, Denmark
+*         Institut Laue Langevin, Grenoble, France
+*
+* Component: pol_RFaker
+* 
+* %I
+* Written by: Sam McKay
+* Date: November 2021
+* Origin: Indiana University
+*
+* Simple model of an RF flipper. The flipper is assumed to be perfectly at resonance.
+*
+* %D
+* Rectangular box that approximates the action of an RF flipper. A neutron hitting outside of 
+* the opening square or the walls is absorbed.
+*
+* This component does NOT take gravity into account.
+*
+* Example: pol_RFaker(xwidth=0.02, yheight=0.02, zdepth=0.1, freq=1.0)
+*
+* %P
+* INPUT PARAMETERS:
+* xwidth:  [m]    Width of opening 
+* yheight: [m]    Height of opening
+* zdepth:  [m]    Length of field region
+* freq:    [MHz]  RF frequency (rotating field)
+*
+* OUTPUT PARAMETERS:
+* phase_fin: [N/A]   Phase angle of spin in the x-z plane (local coordintates)
+*
+* %E
+*******************************************************************************/
+
+DEFINE COMPONENT pol_RFaker
+SETTING PARAMETERS (xwidth=0.02, yheight=0.02, zdepth=0.1, freq=1.0)
+OUTPUT PARAMETERS (phase_fin)
+// Neutron parameters: x, y, z, vx, vy, vz, t, sx, sy, sz, p
+
+SHARE
+%{
+%}
+
+DECLARE
+%{
+  double phase_fin; //final phase
+%}
+
+INITIALIZE
+%{
+  phase_fin = 0; //used for debugging
+  
+  if ((xwidth<=0) || (yheight<=0) || (zdepth<=0)) {
+    fprintf(stderr, "Pol_filter: %s: Null or negative volume!\n"
+	    "ERROR      (xwidth, yheight, zdepth). Exiting\n",
+	    NAME_CURRENT_COMP);
+    exit(1);
+  }
+%}
+
+TRACE
+%{
+  double sx_in = sx, sz_in = sz; //initial spin components
+  double phase_in = atan2(sx_in, sz_in);
+  double deltaT = zdepth/vz; //time spent inside flipper
+  
+  PROP_Z0;  //propagate neutron to local coordinate system origin (front face)
+  
+  if (!inside_rectangle(x, y, xwidth, yheight)){  //defines front mask
+     SCATTER;  //indicates interaction with device
+     ABSORB;
+  }
+
+  if (!inside_rectangle(x+vx*deltaT, y+vy*deltaT, xwidth, yheight)) {  //defines walls and back mask
+     SCATTER;  //indicates interaction with device
+	 ABSORB;
+  }  
+  
+  double t_start = t; //store entrance time for phase calculation
+  
+  PROP_DT(deltaT/2);  //propagate to center of device
+  SCATTER;  //indicates interaction with device
+  
+  phase_fin = 2*M_PI*freq*pow(10,6)*(2*t_start + deltaT) - phase_in; //phase of outgoing neutron
+  sz = cos(phase_fin);
+  sx = sin(phase_fin);
+  
+  PROP_DT(deltaT/2);  //exits device
+  
+%}
+
+MCDISPLAY
+%{
+  box(0, 0, zdepth/2.0, xwidth, yheight, zdepth);
+%}
+
+END
